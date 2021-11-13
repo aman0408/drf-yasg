@@ -96,9 +96,6 @@ class EndpointEnumerator:
                 except Exception:  # pragma: no cover
                     logger.warning('failed to enumerate view', exc_info=True)
             elif isinstance(pattern, RegexURLResolver):
-                print(path_regex)
-                path = self.get_path_from_regex(path_regex)
-                print(path)
                 nested_endpoints = self.get_api_endpoints(
                     patterns=pattern.url_patterns,
                     prefix=path_regex,
@@ -107,7 +104,6 @@ class EndpointEnumerator:
                     ignored_endpoints=ignored_endpoints
                 )
                 api_endpoints.extend(nested_endpoints)
-
 
             else:
                 logger.warning("unknown pattern type {}".format(type(pattern)))
@@ -549,6 +545,7 @@ class OpenAPISchemaGenerator(object):
         :return: path parameters
         :rtype: list[openapi.Parameter]
         """
+        path = path.replace("<", "{").replace(">", "}")
         parameters = []
         queryset = get_queryset_from_view(view_cls)
 
