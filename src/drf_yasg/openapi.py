@@ -4,7 +4,6 @@ import re
 import urllib.parse as urlparse
 from collections import OrderedDict
 
-from django.urls import get_script_prefix
 from django.utils.functional import Promise
 from inflection import camelize
 
@@ -259,7 +258,7 @@ class Swagger(SwaggerDict):
             self.host = url.netloc
             self.schemes = [url.scheme]
 
-        self.base_path = self.get_base_path(get_script_prefix(), _prefix)
+        self.base_path = self.get_base_path("/", _prefix)
         self.consumes = consumes
         self.produces = produces
         self.security_definitions = filter_none(security_definitions)
