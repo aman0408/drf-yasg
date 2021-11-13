@@ -2,10 +2,10 @@ import logging
 from collections import OrderedDict
 
 from rest_framework.request import is_form_media_type
-from rest_framework.schemas import AutoSchema
 from rest_framework.status import is_success
 
 from .. import openapi
+from ..compat import AutoSchema
 from ..errors import SwaggerGenerationError
 from ..utils import (
     filter_none, force_real_str, force_serializer_instance, get_consumes, get_produces, guess_response_status,

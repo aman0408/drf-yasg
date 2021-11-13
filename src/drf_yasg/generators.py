@@ -2,16 +2,18 @@ import copy
 import logging
 import re
 import urllib.parse as urlparse
-from collections import OrderedDict, defaultdict
-
 import uritemplate
-from django.urls import URLPattern, URLResolver
+
+from collections import OrderedDict, defaultdict
+from importlib import import_module
+
+from django.conf import settings
+from django.contrib.admindocs.views import simplify_regex
+from django.core.urlresolvers import RegexURLResolver, RegexURLPattern
 from rest_framework import versioning
-from rest_framework.schemas import SchemaGenerator
-from rest_framework.schemas.generators import EndpointEnumerator as _EndpointEnumerator
-from rest_framework.schemas.generators import endpoint_ordering, get_pk_name
-from rest_framework.schemas.utils import get_pk_description
+from rest_framework.schemas import SchemaGenerator, is_api_view, get_pk_description
 from rest_framework.settings import api_settings
+from rest_framework.utils.model_meta import _get_pk
 
 from . import openapi
 from .app_settings import swagger_settings
@@ -25,19 +27,114 @@ logger = logging.getLogger(__name__)
 PATH_PARAMETER_RE = re.compile(r'{(?P<parameter>\w+)}')
 
 
-class EndpointEnumerator(_EndpointEnumerator):
+def endpoint_ordering(endpoint):
+    path, method, callback = endpoint
+    method_priority = {
+        'GET': 0,
+        'POST': 1,
+        'PUT': 2,
+        'PATCH': 3,
+        'DELETE': 4
+    }.get(method, 5)
+    return (method_priority,)
+
+
+def get_pk_name(model):
+    meta = model._meta.concrete_model._meta
+    return _get_pk(meta).name
+
+
+class EndpointEnumerator:
     def __init__(self, patterns=None, urlconf=None, request=None):
-        super(EndpointEnumerator, self).__init__(patterns, urlconf)
+        if patterns is None:
+            if urlconf is None:
+                # Use the default Django URL conf
+                urlconf = settings.ROOT_URLCONF
+
+            # Load the given URLconf module
+            if isinstance(urlconf, str):
+                urls = import_module(urlconf)
+            else:
+                urls = urlconf
+            patterns = urls.urlpatterns
+
+        self.patterns = patterns
         self.request = request
 
+    def get_api_endpoints(self, patterns=None, prefix='', app_name=None, namespace=None, ignored_endpoints=None):
+        """
+        Return a list of all available API endpoints by inspecting the URL conf.
+
+        Copied entirely from super.
+        """
+        if patterns is None:
+            patterns = self.patterns
+
+        api_endpoints = []
+        if ignored_endpoints is None:
+            ignored_endpoints = set()
+
+        for pattern in patterns:
+            path_regex = prefix + str(pattern.regex.pattern)
+            if isinstance(pattern, RegexURLPattern):
+                try:
+                    path = self.get_path_from_regex(path_regex)
+                    callback = pattern.callback
+                    url_name = pattern.name
+                    if self.should_include_endpoint(path, callback, app_name or '', namespace or '', url_name):
+                        path = self.replace_version(path, callback)
+
+                        # avoid adding endpoints that have already been seen,
+                        # as Django resolves urls in top-down order
+                        if path in ignored_endpoints:
+                            continue
+                        ignored_endpoints.add(path)
+
+                        for method in self.get_allowed_methods(callback):
+                            endpoint = (path, method, callback)
+                            api_endpoints.append(endpoint)
+                except Exception:  # pragma: no cover
+                    logger.warning('failed to enumerate view', exc_info=True)
+            elif isinstance(pattern, RegexURLResolver):
+                print(path_regex)
+                path = self.get_path_from_regex(path_regex)
+                print(path)
+                nested_endpoints = self.get_api_endpoints(
+                    patterns=pattern.url_patterns,
+                    prefix=path_regex,
+                    app_name="%s:%s" % (app_name, pattern.app_name) if app_name else pattern.app_name,
+                    namespace="%s:%s" % (namespace, pattern.namespace) if namespace else pattern.namespace,
+                    ignored_endpoints=ignored_endpoints
+                )
+                api_endpoints.extend(nested_endpoints)
+
+
+            else:
+                logger.warning("unknown pattern type {}".format(type(pattern)))
+
+        api_endpoints = sorted(api_endpoints, key=endpoint_ordering)
+
+        return api_endpoints
+
     def get_path_from_regex(self, path_regex):
-        if path_regex.endswith(')'):
-            logger.warning("url pattern does not end in $ ('%s') - unexpected things might happen", path_regex)
-        return self.unescape_path(super(EndpointEnumerator, self).get_path_from_regex(path_regex))
+        # if path_regex.endswith(')'):
+        #     logger.warning("url pattern does not end in $ ('%s') - unexpected things might happen", path_regex)
+        path = simplify_regex(path_regex)
+        return self.unescape_path(path)
 
     def should_include_endpoint(self, path, callback, app_name='', namespace='', url_name=None):
-        if not super(EndpointEnumerator, self).should_include_endpoint(path, callback):
-            return False
+        if not is_api_view(callback):
+            return False  # Ignore anything except REST framework views.
+        if hasattr(callback.cls, "schema"):
+            if callback.cls.schema is None:
+                return False
+
+        if 'schema' in callback.initkwargs:
+            if callback.initkwargs['schema'] is None:
+                return False
+
+        if path.endswith('.{format}') or path.endswith('.{format}/'):
+            return False  # Ignore .json style URLs.
 
         version = getattr(self.request, 'version', None)
         versioning_class = getattr(callback.cls, 'versioning_class', None)
@@ -49,6 +146,19 @@ class EndpointEnumerator(_EndpointEnumerator):
             return False
 
         return True
+
+    def get_allowed_methods(self, callback):
+        """
+        Return a list of the valid HTTP methods for this endpoint.
+        """
+        if hasattr(callback, 'actions'):
+            actions = set(callback.actions)
+            http_method_names = set(callback.cls.http_method_names)
+            methods = [method.upper() for method in actions & http_method_names]
+        else:
+            methods = callback.cls().allowed_methods
+
+        return [method for method in methods if method not in ('OPTIONS', 'HEAD')]
 
     def replace_version(self, path, callback):
         """If ``request.version`` is not ``None`` and `callback` uses ``URLPathVersioning``, this function replaces
@@ -70,57 +180,6 @@ class EndpointEnumerator(_EndpointEnumerator):
                 path = path.replace(version_param, version)
 
         return path
-
-    def get_api_endpoints(self, patterns=None, prefix='', app_name=None, namespace=None, ignored_endpoints=None):
-        """
-        Return a list of all available API endpoints by inspecting the URL conf.
-
-        Copied entirely from super.
-        """
-        if patterns is None:
-            patterns = self.patterns
-
-        api_endpoints = []
-        if ignored_endpoints is None:
-            ignored_endpoints = set()
-
-        for pattern in patterns:
-            path_regex = prefix + str(pattern.pattern)
-            if isinstance(pattern, URLPattern):
-                try:
-                    path = self.get_path_from_regex(path_regex)
-                    callback = pattern.callback
-                    url_name = pattern.name
-                    if self.should_include_endpoint(path, callback, app_name or '', namespace or '', url_name):
-                        path = self.replace_version(path, callback)
-
-                        # avoid adding endpoints that have already been seen,
-                        # as Django resolves urls in top-down order
-                        if path in ignored_endpoints:
-                            continue
-                        ignored_endpoints.add(path)
-
-                        for method in self.get_allowed_methods(callback):
-                            endpoint = (path, method, callback)
-                            api_endpoints.append(endpoint)
-                except Exception:  # pragma: no cover
-                    logger.warning('failed to enumerate view', exc_info=True)
-
-            elif isinstance(pattern, URLResolver):
-                nested_endpoints = self.get_api_endpoints(
-                    patterns=pattern.url_patterns,
-                    prefix=path_regex,
-                    app_name="%s:%s" % (app_name, pattern.app_name) if app_name else pattern.app_name,
-                    namespace="%s:%s" % (namespace, pattern.namespace) if namespace else pattern.namespace,
-                    ignored_endpoints=ignored_endpoints
-                )
-                api_endpoints.extend(nested_endpoints)
-            else:
-                logger.warning("unknown pattern type {}".format(type(pattern)))
-
-        api_endpoints = sorted(api_endpoints, key=endpoint_ordering)
-
-        return api_endpoints
 
     def unescape(self, s):
         """Unescape all backslash escapes from `s`.

@@ -1,9 +1,10 @@
+import json
 from django.shortcuts import resolve_url
 from django.template.loader import render_to_string
 from django.utils.encoding import force_str
 from django.utils.functional import Promise
 from rest_framework.renderers import BaseRenderer, JSONRenderer, TemplateHTMLRenderer
-from rest_framework.utils import encoders, json
+from rest_framework.utils import encoders
 
 from .app_settings import redoc_settings, swagger_settings
 from .codecs import VALIDATORS, OpenAPICodecJson, OpenAPICodecYaml
@@ -70,7 +71,7 @@ class _UIRenderer(BaseRenderer):
             return TemplateHTMLRenderer().render(swagger, accepted_media_type, renderer_context)
 
         self.set_context(renderer_context, swagger)
-        return render_to_string(self.template, renderer_context, renderer_context['request'])
+        return render_to_string(self.template, renderer_context, request=renderer_context['request'])
 
     def set_context(self, renderer_context, swagger=None):
         renderer_context['title'] = swagger.info.title or '' if swagger else ''
