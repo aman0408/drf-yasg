@@ -1,7 +1,7 @@
 import os
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
-from django.urls import reverse_lazy
+from django.core.urlresolvers import reverse_lazy
 
 from testproj.util import static_lazy
 
@@ -36,7 +36,7 @@ INSTALLED_APPS = [
     'people'
 ]
 
-MIDDLEWARE = [
+MIDDLEWARE= [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -99,8 +99,8 @@ OAUTH2_CLIENT_SECRET = '5FvYALo7W4uNnWE2ySw7Yzpkxh9PSf5GuY37RvOys00ydEyph64dbl1E
 OAUTH2_APP_NAME = 'drf-yasg OAuth2 provider'
 
 OAUTH2_REDIRECT_URL = static_lazy('drf-yasg/swagger-ui-dist/oauth2-redirect.html')
-OAUTH2_AUTHORIZE_URL = reverse_lazy('oauth2_provider:authorize')
-OAUTH2_TOKEN_URL = reverse_lazy('oauth2_provider:token')
+# OAUTH2_AUTHORIZE_URL = reverse_lazy('oauth2_provider:authorize')
+# OAUTH2_TOKEN_URL = reverse_lazy('oauth2_provider:token')
 
 # drf-yasg
 SWAGGER_SETTINGS = {
@@ -121,15 +121,15 @@ SWAGGER_SETTINGS = {
             'name': 'Authorization',
             'type': 'apiKey',
         },
-        'OAuth2 password': {
-            'flow': 'password',
-            'scopes': {
-                'read': 'Read everything.',
-                'write': 'Write everything,',
-            },
-            'tokenUrl': OAUTH2_TOKEN_URL,
-            'type': 'oauth2',
-        },
+        # 'OAuth2 password': {
+        #     'flow': 'password',
+        #     'scopes': {
+        #         'read': 'Read everything.',
+        #         'write': 'Write everything,',
+        #     },
+        #     'tokenUrl': OAUTH2_TOKEN_URL,
+        #     'type': 'oauth2',
+        # },
         'Query': {
             'in': 'query',
             'name': 'auth',

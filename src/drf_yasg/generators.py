@@ -2,21 +2,19 @@ import copy
 import logging
 import re
 import urllib.parse as urlparse
-import uritemplate
-
 from collections import OrderedDict, defaultdict
-from importlib import import_module
 
-from django.conf import settings
+import uritemplate
 from django.contrib.admindocs.views import simplify_regex
 from django.core.urlresolvers import RegexURLResolver, RegexURLPattern
 from rest_framework import versioning
-from rest_framework.schemas import SchemaGenerator, is_api_view, get_pk_description
+from .drf_compat import EndpointEnumerator as _EndpointEnumerator, endpoint_ordering, get_pk_name, get_pk_description, \
+    is_api_view
 from rest_framework.settings import api_settings
-from rest_framework.utils.model_meta import _get_pk
 
 from . import openapi
 from .app_settings import swagger_settings
+from .drf_compat import SchemaGenerator
 from .errors import SwaggerGenerationError
 from .inspectors.field import get_basic_type_info, get_queryset_field, get_queryset_from_view
 from .openapi import ReferenceResolver, SwaggerDict
@@ -27,39 +25,61 @@ logger = logging.getLogger(__name__)
 PATH_PARAMETER_RE = re.compile(r'{(?P<parameter>\w+)}')
 
 
-def endpoint_ordering(endpoint):
-    path, method, callback = endpoint
-    method_priority = {
-        'GET': 0,
-        'POST': 1,
-        'PUT': 2,
-        'PATCH': 3,
-        'DELETE': 4
-    }.get(method, 5)
-    return (method_priority,)
-
-
-def get_pk_name(model):
-    meta = model._meta.concrete_model._meta
-    return _get_pk(meta).name
-
-
-class EndpointEnumerator:
+class EndpointEnumerator(_EndpointEnumerator):
     def __init__(self, patterns=None, urlconf=None, request=None):
-        if patterns is None:
-            if urlconf is None:
-                # Use the default Django URL conf
-                urlconf = settings.ROOT_URLCONF
-
-            # Load the given URLconf module
-            if isinstance(urlconf, str):
-                urls = import_module(urlconf)
-            else:
-                urls = urlconf
-            patterns = urls.urlpatterns
-
-        self.patterns = patterns
+        super(EndpointEnumerator, self).__init__(patterns, urlconf)
         self.request = request
+
+    def get_path_from_regex(self, path_regex):
+        # if path_regex.endswith(')'):
+        #     logger.warning("url pattern does not end in $ ('%s') - unexpected things might happen", path_regex)
+        path = simplify_regex(path_regex)
+        return self.unescape_path(path)
+
+    def should_include_endpoint(self, path, callback, app_name='', namespace='', url_name=None):
+        if not is_api_view(callback):
+            return False  # Ignore anything except REST framework views.
+        if hasattr(callback.cls, "schema"):
+            if callback.cls.schema is None:
+                return False
+
+        # if 'schema' in callback.initkwargs:
+        #     if callback.initkwargs['schema'] is None:
+        #         return False
+
+        if path.endswith('.{format}') or path.endswith('.{format}/'):
+            return False  # Ignore .json style URLs.
+
+        version = getattr(self.request, 'version', None)
+        versioning_class = getattr(callback.cls, 'versioning_class', None)
+        if versioning_class is not None and issubclass(versioning_class, versioning.NamespaceVersioning):
+            if version and version not in namespace.split(':'):
+                return False
+
+        if getattr(callback.cls, 'swagger_schema', object()) is None:
+            return False
+
+        return True
+
+    def replace_version(self, path, callback):
+        """If ``request.version`` is not ``None`` and `callback` uses ``URLPathVersioning``, this function replaces
+        the ``version`` parameter in `path` with the actual version.
+        :param str path: the templated path
+        :param callback: the view callback
+        :rtype: str
+        """
+        versioning_class = getattr(callback.cls, 'versioning_class', None)
+        if versioning_class is not None and issubclass(versioning_class, versioning.URLPathVersioning):
+            version = getattr(self.request, 'version', None)
+            if version:
+                version_param = getattr(versioning_class, 'version_param', 'version')
+                version_param = '{%s}' % version_param
+                if version_param not in path:
+                    logger.info("view %s uses URLPathVersioning but URL %s has no param %s"
+                                % (callback.cls, path, version_param))
+                path = path.replace(version_param, version)
+
+        return path
 
     def get_api_endpoints(self, patterns=None, prefix='', app_name=None, namespace=None, ignored_endpoints=None):
         """
@@ -95,6 +115,7 @@ class EndpointEnumerator:
                             api_endpoints.append(endpoint)
                 except Exception:  # pragma: no cover
                     logger.warning('failed to enumerate view', exc_info=True)
+
             elif isinstance(pattern, RegexURLResolver):
                 nested_endpoints = self.get_api_endpoints(
                     patterns=pattern.url_patterns,
@@ -104,78 +125,12 @@ class EndpointEnumerator:
                     ignored_endpoints=ignored_endpoints
                 )
                 api_endpoints.extend(nested_endpoints)
-
             else:
                 logger.warning("unknown pattern type {}".format(type(pattern)))
 
         api_endpoints = sorted(api_endpoints, key=endpoint_ordering)
 
         return api_endpoints
-
-    def get_path_from_regex(self, path_regex):
-        # if path_regex.endswith(')'):
-        #     logger.warning("url pattern does not end in $ ('%s') - unexpected things might happen", path_regex)
-        path = simplify_regex(path_regex)
-        return self.unescape_path(path)
-
-    def should_include_endpoint(self, path, callback, app_name='', namespace='', url_name=None):
-        if not is_api_view(callback):
-            return False  # Ignore anything except REST framework views.
-        if hasattr(callback.cls, "schema"):
-            if callback.cls.schema is None:
-                return False
-
-        if 'schema' in callback.initkwargs:
-            if callback.initkwargs['schema'] is None:
-                return False
-
-        if path.endswith('.{format}') or path.endswith('.{format}/'):
-            return False  # Ignore .json style URLs.
-
-        version = getattr(self.request, 'version', None)
-        versioning_class = getattr(callback.cls, 'versioning_class', None)
-        if versioning_class is not None and issubclass(versioning_class, versioning.NamespaceVersioning):
-            if version and version not in namespace.split(':'):
-                return False
-
-        if getattr(callback.cls, 'swagger_schema', object()) is None:
-            return False
-
-        return True
-
-    def get_allowed_methods(self, callback):
-        """
-        Return a list of the valid HTTP methods for this endpoint.
-        """
-        if hasattr(callback, 'actions'):
-            actions = set(callback.actions)
-            http_method_names = set(callback.cls.http_method_names)
-            methods = [method.upper() for method in actions & http_method_names]
-        else:
-            methods = callback.cls().allowed_methods
-
-        return [method for method in methods if method not in ('OPTIONS', 'HEAD')]
-
-    def replace_version(self, path, callback):
-        """If ``request.version`` is not ``None`` and `callback` uses ``URLPathVersioning``, this function replaces
-        the ``version`` parameter in `path` with the actual version.
-
-        :param str path: the templated path
-        :param callback: the view callback
-        :rtype: str
-        """
-        versioning_class = getattr(callback.cls, 'versioning_class', None)
-        if versioning_class is not None and issubclass(versioning_class, versioning.URLPathVersioning):
-            version = getattr(self.request, 'version', None)
-            if version:
-                version_param = getattr(versioning_class, 'version_param', 'version')
-                version_param = '{%s}' % version_param
-                if version_param not in path:
-                    logger.info("view %s uses URLPathVersioning but URL %s has no param %s"
-                                % (callback.cls, path, version_param))
-                path = path.replace(version_param, version)
-
-        return path
 
     def unescape(self, s):
         """Unescape all backslash escapes from `s`.
@@ -208,6 +163,19 @@ class EndpointEnumerator:
             path = path[match.end():]
 
         return clean_path
+
+    def get_allowed_methods(self, callback):
+        """
+        Return a list of the valid HTTP methods for this endpoint.
+        """
+        if hasattr(callback, 'actions'):
+            actions = set(callback.actions)
+            http_method_names = set(callback.cls.http_method_names)
+            methods = [method.upper() for method in actions & http_method_names]
+        else:
+            methods = callback.cls().allowed_methods
+
+        return [method for method in methods if method not in ('OPTIONS', 'HEAD')]
 
 
 class OpenAPISchemaGenerator(object):

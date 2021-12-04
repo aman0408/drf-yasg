@@ -1,6 +1,7 @@
 import logging
 from collections import OrderedDict
 
+from drf_yasg.drf_compat import AutoSchema
 from rest_framework.request import is_form_media_type
 from rest_framework.status import is_success
 

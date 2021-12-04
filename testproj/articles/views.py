@@ -58,7 +58,7 @@ class ArticlePagination(LimitOffsetPagination):
     max_limit = 25
 
 
-@method_decorator(name='list', decorator=swagger_auto_schema(
+@method_decorator(decorator=swagger_auto_schema(
     operation_description="description from swagger_auto_schema via method_decorator",
     filter_inspectors=[DjangoFilterDescriptionInspector],
 ))
@@ -91,7 +91,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
 
     swagger_schema = NoTitleAutoSchema
 
-    from rest_framework.decorators import action
+    from drf_yasg.drf_compat import action
 
     @swagger_auto_schema(auto_schema=NoPagingAutoSchema, filter_inspectors=[DjangoFilterDescriptionInspector])
     @action(detail=False, methods=['get'])

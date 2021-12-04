@@ -50,7 +50,7 @@ class TodoTreeSerializer(serializers.ModelSerializer):
 
 class TodoRecursiveSerializer(serializers.ModelSerializer):
     parent = RecursiveField(read_only=True)
-    parent_id = serializers.PrimaryKeyRelatedField(queryset=TodoTree.objects.all(), pk_field=serializers.IntegerField(),
+    parent_id = serializers.PrimaryKeyRelatedField(queryset=TodoTree.objects.all(),
                                                    write_only=True, allow_null=True, required=False, default=None,
                                                    source='parent')
 
