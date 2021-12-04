@@ -1,4 +1,4 @@
-from django.urls import path
+from django.conf.urls import url
 from rest_framework import routers
 
 from todo import views
@@ -14,6 +14,6 @@ router.register(r'harvest', views.HarvestViewSet)
 urlpatterns = router.urls
 
 urlpatterns += [
-    path(r'<int:todo_id>/yetanothers/<int:yetanother_id>/',
+    url(r'<int:todo_id>/yetanothers/<int:yetanother_id>/',
          views.NestedTodoView.as_view(), ),
 ]

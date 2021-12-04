@@ -69,6 +69,12 @@ SWAGGER_DEFAULTS = {
         'trace'
     ],
     'DISPLAY_OPERATION_ID': True,
+
+    'SCHEMA_COERCE_PATH_PK': True,
+    'SCHEMA_COERCE_METHOD_NAMES': {
+        'retrieve': 'read',
+        'destroy': 'delete'
+    },
 }
 
 REDOC_DEFAULTS = {

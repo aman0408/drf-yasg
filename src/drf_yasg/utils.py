@@ -12,7 +12,8 @@ from rest_framework.mixins import DestroyModelMixin, ListModelMixin, RetrieveMod
 from rest_framework.parsers import FileUploadParser
 from rest_framework.request import is_form_media_type
 from rest_framework.settings import api_settings as rest_framework_settings
-from rest_framework.utils import encoders, json
+from rest_framework.utils import encoders
+import json
 from rest_framework.views import APIView
 
 from .app_settings import swagger_settings

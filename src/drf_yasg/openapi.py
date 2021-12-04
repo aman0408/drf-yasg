@@ -4,7 +4,7 @@ import re
 import urllib.parse as urlparse
 from collections import OrderedDict
 
-from django.urls import get_script_prefix
+from django.core.urlresolvers import get_script_prefix
 from django.utils.functional import Promise
 from inflection import camelize
 

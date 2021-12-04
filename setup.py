@@ -17,7 +17,7 @@ def read_req(req_file):
 with io.open('README.rst', encoding='utf-8') as readme:
     description = readme.read()
 
-requirements = read_req('base.txt')
+requirements = read_req('d18.txt')
 requirements_validation = read_req('validation.txt')
 
 

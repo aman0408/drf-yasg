@@ -5,16 +5,16 @@ import urllib.parse as urlparse
 from collections import OrderedDict, defaultdict
 
 import uritemplate
-from django.urls import URLPattern, URLResolver
+from django.contrib.admindocs.views import simplify_regex
+from django.core.urlresolvers import RegexURLResolver, RegexURLPattern
 from rest_framework import versioning
-from rest_framework.schemas import SchemaGenerator
-from rest_framework.schemas.generators import EndpointEnumerator as _EndpointEnumerator
-from rest_framework.schemas.generators import endpoint_ordering, get_pk_name
-from rest_framework.schemas.utils import get_pk_description
+from .drf_compat import EndpointEnumerator as _EndpointEnumerator, endpoint_ordering, get_pk_name, get_pk_description, \
+    is_api_view
 from rest_framework.settings import api_settings
 
 from . import openapi
 from .app_settings import swagger_settings
+from .drf_compat import SchemaGenerator
 from .errors import SwaggerGenerationError
 from .inspectors.field import get_basic_type_info, get_queryset_field, get_queryset_from_view
 from .openapi import ReferenceResolver, SwaggerDict
@@ -31,13 +31,24 @@ class EndpointEnumerator(_EndpointEnumerator):
         self.request = request
 
     def get_path_from_regex(self, path_regex):
-        if path_regex.endswith(')'):
-            logger.warning("url pattern does not end in $ ('%s') - unexpected things might happen", path_regex)
-        return self.unescape_path(super(EndpointEnumerator, self).get_path_from_regex(path_regex))
+        # if path_regex.endswith(')'):
+        #     logger.warning("url pattern does not end in $ ('%s') - unexpected things might happen", path_regex)
+        path = simplify_regex(path_regex)
+        return self.unescape_path(path)
 
     def should_include_endpoint(self, path, callback, app_name='', namespace='', url_name=None):
-        if not super(EndpointEnumerator, self).should_include_endpoint(path, callback):
-            return False
+        if not is_api_view(callback):
+            return False  # Ignore anything except REST framework views.
+        if hasattr(callback.cls, "schema"):
+            if callback.cls.schema is None:
+                return False
+
+        # if 'schema' in callback.initkwargs:
+        #     if callback.initkwargs['schema'] is None:
+        #         return False
+
+        if path.endswith('.{format}') or path.endswith('.{format}/'):
+            return False  # Ignore .json style URLs.
 
         version = getattr(self.request, 'version', None)
         versioning_class = getattr(callback.cls, 'versioning_class', None)
@@ -53,7 +64,6 @@ class EndpointEnumerator(_EndpointEnumerator):
     def replace_version(self, path, callback):
         """If ``request.version`` is not ``None`` and `callback` uses ``URLPathVersioning``, this function replaces
         the ``version`` parameter in `path` with the actual version.
-
         :param str path: the templated path
         :param callback: the view callback
         :rtype: str
@@ -85,8 +95,8 @@ class EndpointEnumerator(_EndpointEnumerator):
             ignored_endpoints = set()
 
         for pattern in patterns:
-            path_regex = prefix + str(pattern.pattern)
-            if isinstance(pattern, URLPattern):
+            path_regex = prefix + str(pattern.regex.pattern)
+            if isinstance(pattern, RegexURLPattern):
                 try:
                     path = self.get_path_from_regex(path_regex)
                     callback = pattern.callback
@@ -106,7 +116,7 @@ class EndpointEnumerator(_EndpointEnumerator):
                 except Exception:  # pragma: no cover
                     logger.warning('failed to enumerate view', exc_info=True)
 
-            elif isinstance(pattern, URLResolver):
+            elif isinstance(pattern, RegexURLResolver):
                 nested_endpoints = self.get_api_endpoints(
                     patterns=pattern.url_patterns,
                     prefix=path_regex,
@@ -153,6 +163,19 @@ class EndpointEnumerator(_EndpointEnumerator):
             path = path[match.end():]
 
         return clean_path
+
+    def get_allowed_methods(self, callback):
+        """
+        Return a list of the valid HTTP methods for this endpoint.
+        """
+        if hasattr(callback, 'actions'):
+            actions = set(callback.actions)
+            http_method_names = set(callback.cls.http_method_names)
+            methods = [method.upper() for method in actions & http_method_names]
+        else:
+            methods = callback.cls().allowed_methods
+
+        return [method for method in methods if method not in ('OPTIONS', 'HEAD')]
 
 
 class OpenAPISchemaGenerator(object):
@@ -490,6 +513,7 @@ class OpenAPISchemaGenerator(object):
         :return: path parameters
         :rtype: list[openapi.Parameter]
         """
+        path = path.replace("<", "{").replace(">", "}")
         parameters = []
         queryset = get_queryset_from_view(view_cls)
 
