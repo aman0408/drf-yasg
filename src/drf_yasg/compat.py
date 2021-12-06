@@ -9,8 +9,9 @@ import coreschema
 import uritemplate
 from django.db import models
 from django.utils.encoding import smart_str, force_str
+from drf_yasg.drf_compat import get_pk_description, field_to_schema, is_list_view
 from rest_framework import exceptions, serializers
-from rest_framework.schemas import get_pk_description, field_to_schema, is_list_view
+
 from rest_framework.settings import api_settings
 from rest_framework.utils import formatting
 
